@@ -1,8 +1,8 @@
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import GeminiEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.vectorstores import FAISS
-from langchain.document_loaders import UnstructuredFileLoader
-from langchain.document_loaders import WebBaseLoader
+from langchain_community.document_loaders import UnstructuredFileLoader
+from langchain_community.document_loaders import WebBaseLoader
 from bs4 import BeautifulSoup
 import requests
 import os
@@ -26,7 +26,7 @@ def create_vector_store(document, chunk_size=500, chunk_overlap=50):
         docs = text_splitter.split_documents(document)
     else: # document is from web loader
         docs = text_splitter.split_text(document)
-    embeddings = GeminiEmbeddings(model_name="gemini-2.0-flash-exp")
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", task_type="retrieval_document")
     if isinstance(docs, list):
       vector_store = FAISS.from_documents(docs, embeddings)
     else:

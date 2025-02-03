@@ -1,27 +1,23 @@
 import os
-from langchain.llms import Gemini
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain.chains import create_retrieval_chain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 
 def init_chatbot(vector_store):
-    llm = Gemini(model="models/gemini-pro",
-                gemini_api_key=os.environ.get("GOOGLE_API_KEY")
-    )
-    prompt_template = """Use the following pieces of context to answer the question at the end. 
-    If you don't know the answer, just say that you don't know, don't try to make up an answer.
-    
-    {context}
-    
-    Question: {question}
-    """
-    PROMPT = PromptTemplate(
-      template=prompt_template, input_variables=["context", "question"]
-      )
-    qa_chain = RetrievalQA.from_chain_type(
-        llm=llm,
-        chain_type="stuff",
-        retriever=vector_store.as_retriever(),
-        chain_type_kwargs={"prompt": PROMPT},
-    )
-
-    return qa_chain
+  llm = ChatGoogleGenerativeAI(
+    model="gemini-1.5-pro",  # hoặc "gemini-pro"
+    gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
+    temperature=0, # or other parameters
+  )
+  prompt_template = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know. Don't try to make up an answer. Always respond concisely and only with a few sentences. Summarize the information in the context. Return the answer as a simple text string.\n\n{context}",
+        ),
+        ("human", "{input}"),
+    ]
+  )
+  chain = create_retrieval_chain(vector_store.as_retriever(), prompt_template)
+  return chain
