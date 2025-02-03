@@ -1,0 +1,22 @@
+# Virtual environment
+venv/
+.env
+
+# Python specific
+*.pyc
+__pycache__/
+
+# Streamlit specific
+.streamlit/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
