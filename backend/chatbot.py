@@ -2,8 +2,8 @@ import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import create_retrieval_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import chain
-from langchain_core.runnables import RunnablePassthrough 
 
 def init_chatbot(vector_store):
     llm = ChatGoogleGenerativeAI(
@@ -37,6 +37,25 @@ def init_chatbot(vector_store):
         prompt = prompt_template.format(input=input, context=context)
         return llm.invoke(prompt).content
 
-    retrieval_chain = RunnablePassthrough.assign(context=lambda x: format_docs(retriever.get_relevant_documents(x["input"]))) | prompt_template | llm
+    retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])), "input": lambda x: x["input"]} | prompt_template | llm
 
     return retrieval_chain
+
+def generate_toc_with_llm(document_content):
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
+        gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
+        temperature=0, # or other parameters
+    )
+
+    prompt = f"""
+    Please generate a table of contents for the following document. The table of contents should be well-organized and reflect the main topics covered in the document. Return just list the headings.
+    Document Content:
+    {document_content}
+    """
+    try:
+        toc = llm.invoke(prompt)
+        return toc.split('\n')
+    except Exception as e:
+        print(f"Error generating TOC with LLM: {e}")
+        return None

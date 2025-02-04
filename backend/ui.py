@@ -1,15 +1,17 @@
 import dotenv
 dotenv.load_dotenv()
+
 import streamlit as st
 import os
 import tempfile
 from rag_utils import load_document, create_vector_store, load_vector_store
-from chatbot import init_chatbot
+from chatbot import init_chatbot, generate_toc_with_llm
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.messages import AIMessage, HumanMessage
 from bs4 import BeautifulSoup
 import requests
 import pdfplumber
+import docx2txt
 
 # Khởi tạo Embeddings (hoặc GeminiEmbeddings nếu bạn muốn)
 EMBEDDER = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -28,17 +30,24 @@ def save_uploaded_file(uploaded_file):
     return file_path
 def get_table_of_contents(url):
     try:
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url # Add https:// if no scheme is present
         response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for bad status codes
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Find all heading tags (h1, h2, h3, etc.)
+        # Find all heading tags (h1, h2, h3, h4, h5', 'h6'])
         heading_tags = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 
         toc = []
         for tag in heading_tags:
             toc.append({"text": tag.text, "id": tag.get('id')})
         return toc
-    except:
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching URL: {e}")
+        return None
+    except Exception as e:
+        print(f"Error parsing HTML: {e}")
         return None
 
 def get_table_of_contents_pdf(file_path):
@@ -52,8 +61,24 @@ def get_table_of_contents_pdf(file_path):
                     toc.append(element["text"])
         pdf.close()
         return toc
-    except:
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
         return None
+
+def get_table_of_contents_docx(file_path):
+  try:
+    text = docx2txt.process(file_path)
+    # Split the text into lines and find those that look like headings
+    lines = text.split("\n")
+    toc = []
+    for line in lines:
+      line = line.strip()  # Remove leading/trailing whitespace
+      if line and (line.startswith("Chapter") or line.startswith("Section")):
+        toc.append(line)
+    return toc
+  except:
+    return None
+
 def main():
     # Khởi tạo các biến trong session state
     if 'chat_sessions' not in st.session_state:
@@ -76,34 +101,31 @@ def main():
 
         st.markdown('## New Document')
         file = st.file_uploader(label='')
+        url = st.text_input("Enter a URL", key="url_input") # Thêm ô nhập URL
         applied = st.button(label='📄 Load Document')  # Button Load Document
 
         # if apply button clicked
         if applied:
             # if no file uploaded, warn the user
-            if not file:
-                st.warning('Please load a document.')
+            if not file and not url:
+                st.warning('Please load a document or enter a URL.')
             # if a file is uplaoded, read and create the embedding
             else:
                 with st.spinner():
-                    # Lưu file tải lên
-                    file_path = save_uploaded_file(file)
-                    doc_name = file.name[:file.name.index('.')]
-                    st.session_state.doc_name = doc_name
-
-                    # Tạo thư mục indexes nếu chưa có
-                    if not os.path.exists('document_indexes'):
-                        os.makedirs('document_indexes')
-
-                    if not os.path.exists(doc_name):
-                        os.makedirs(doc_name)
-                    if doc_name.strip() in get_available_docs():
-                        st.warning('The document is already exists.')
-                        st.session_state.vectorstore = load_vector_store(doc_name, EMBEDDER)
-                    else:
+                    if file:
+                        # Lưu file tải lên
+                        file_path = save_uploaded_file(file)
+                        doc_name = file.name[:file.name.index('.')]
+                        st.session_state.doc_name = doc_name
                         doc = load_document(file_path=file_path)
                         st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
-                        st.success('Document load successfully ✔️')
+                    elif url: # Nếu có URL
+                        doc = load_document(url=url)
+                        doc_name = url.replace("/", "_").replace(":", "_")
+                        st.session_state.doc_name = doc_name
+                        st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
+                    st.success('Document load successfully ✔️')
+
                 # Xóa file tạm sau khi xử lý xong
                 # os.remove(file_path) # <--  Bạn có thể bỏ dòng này nếu muốn giữ lại file tạm
 
@@ -150,10 +172,20 @@ def main():
                 st.markdown("**Selected Documents:**")
                 for doc in selected_docs:
                     st.markdown(f"- {doc}")
+                    # Kiểm tra xem là URL hay file để lấy mục lục phù hợp
                     if "http" in doc:
                         toc = get_table_of_contents(doc)
                     else:
-                        toc = get_table_of_contents_pdf(doc)
+                         file_extension = os.path.splitext(doc)[1].lower()
+                         if file_extension == ".pdf":
+                            toc = get_table_of_contents_pdf(doc)
+                            if not toc:
+                                doc_content = load_document(file_path=doc)
+                                toc = generate_toc_with_llm(doc_content)
+                         elif file_extension == ".docx" or file_extension == ".doc":
+                             toc = get_table_of_contents_docx(doc)
+                         else:
+                             toc = None
                     if toc:
                          st.markdown("**Table of Contents**")
                          for item in toc:
