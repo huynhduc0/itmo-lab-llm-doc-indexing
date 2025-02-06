@@ -4,8 +4,19 @@ from langchain.chains import create_retrieval_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import chain
+from langchain.tools import DuckDuckGoSearchRun
 
-def init_chatbot(vector_store):
+def init_chatbot(vector_store, internet_search=False):
+    restrict = """
+    You must base your answers primarily on the context provided from the document(s).
+
+    If the context and search results don't contain information relevant to the question, simply say that you don't know. Do not make up answers.
+
+    When using search results, incorporate them seamlessly and cite sources where appropriate.
+    Always respond concisely and in a way that is easy to understand. Summarize the information, focusing on the main points and removing irrelevant details.
+    Offer advice on how to use the information to help the user understand it better.
+    Return the answer as a simple text string.
+    """
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
         gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
@@ -15,13 +26,11 @@ def init_chatbot(vector_store):
         [
             (
                 "system",
-                """You are a helpful and expert document assistant. Use the provided information to answer the user's question as accurately and helpfully as possible.
-                If you don't know the answer, simply say that you don't know. Do not make up answers.
-                Always respond concisely and in a way that is easy to understand, using no more than a few sentences. Summarize the information from the context, focusing on the main points and removing irrelevant details.
-                Offer advice on how to use the information in the document to help the user understand it better.
-                Return the answer as a simple text string.
+                """You are a helpful and expert document assistant. You will be given a question, a context, and, if available, search results from the internet. Your job is to answer the question as accurately and helpfully as possible.
 
-                Context:\n\n{context}""",
+                """ +
+                (""" You have access to the internet search results. Use them to add breadth and depth to your responses, providing more comprehensive and up-to-date information.""" if internet_search else "") +
+                """\n\nContext:\n\n{context}""",
             ),
             ("human", "{input}"),
         ]
@@ -32,12 +41,15 @@ def init_chatbot(vector_store):
     # Tạo chain
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
-
-    def generate_answer(input, context):
-        prompt = prompt_template.format(input=input, context=context)
-        return llm.invoke(prompt).content
-
-    retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])), "input": lambda x: x["input"]} | prompt_template | llm
+    if internet_search:
+        search = DuckDuckGoSearchRun()
+        def search_intent(x):
+            query = x["input"]
+            related_results = search.run(query)
+            return related_results
+        retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])) + "\nWeb Search Results:\n" + search_intent(x), "input": RunnablePassthrough()} | prompt_template | llm
+    else:
+        retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])), "input": RunnablePassthrough()} | prompt_template | llm
 
     return retrieval_chain
 

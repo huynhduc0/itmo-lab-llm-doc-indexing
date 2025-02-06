@@ -1,6 +1,3 @@
-import dotenv
-dotenv.load_dotenv()
-
 import streamlit as st
 import os
 import tempfile
@@ -12,6 +9,13 @@ from bs4 import BeautifulSoup
 import requests
 import pdfplumber
 import docx2txt
+import dotenv
+from sqlalchemy import create_engine, Column, Integer, String, Text, PickleType
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from langchain.tools import DuckDuckGoSearchRun
+
+dotenv.load_dotenv()
 
 # Khởi tạo Embeddings (hoặc GeminiEmbeddings nếu bạn muốn)
 EMBEDDER = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
@@ -80,7 +84,7 @@ def get_table_of_contents_docx(file_path):
     return None
 
 def main():
-    # Khởi tạo các biến trong session state
+    # Initialize session state
     if 'chat_sessions' not in st.session_state:
         st.session_state.chat_sessions = {}  # Lưu trữ thông tin phiên
     if 'current_session' not in st.session_state:
@@ -91,8 +95,14 @@ def main():
         st.session_state.vectorstore = None
     if 'doc_name' not in st.session_state:
         st.session_state.doc_name = None
+    if 'doc_url' not in st.session_state:
+        st.session_state.doc_url = None
+    if 'doc_toc' not in st.session_state:
+        st.session_state.doc_toc = None
     if 'chat_mode' not in st.session_state:
         st.session_state.chat_mode = "File hiện tại"  # Mặc định chat trên file hiện tại
+    if 'internet_search' not in st.session_state:
+        st.session_state.internet_search = False
 
     st.title("Docs Assistant")
 
@@ -117,13 +127,29 @@ def main():
                         file_path = save_uploaded_file(file)
                         doc_name = file.name[:file.name.index('.')]
                         st.session_state.doc_name = doc_name
+                        st.session_state.doc_url = None
                         doc = load_document(file_path=file_path)
                         st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
+                        file_extension = os.path.splitext(file_path)[1].lower()
+                        if file_extension == ".pdf":
+                            toc = get_table_of_contents_pdf(file_path)
+                            if not toc:
+                                doc_content = load_document(file_path=file_path)
+                                toc = generate_toc_with_llm(doc_content)
+                        elif file_extension == ".docx" or file_extension == ".doc":
+                            toc = get_table_of_contents_docx(file_path)
+                        else:
+                            toc = None
+                        st.session_state.doc_toc = toc
+
                     elif url: # Nếu có URL
                         doc = load_document(url=url)
                         doc_name = url.replace("/", "_").replace(":", "_")
                         st.session_state.doc_name = doc_name
+                        st.session_state.doc_url = url  # Lưu URL gốc
                         st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
+                        toc = get_table_of_contents(url)
+                        st.session_state.doc_toc = toc
                     st.success('Document load successfully ✔️')
 
                 # Xóa file tạm sau khi xử lý xong
@@ -164,6 +190,9 @@ def main():
         else:
             st.info("Create a chat session to start.")
 
+        #Options outside sidebar.
+        st.session_state.internet_search = st.toggle("Enable Internet Search", value=False)
+
     if st.session_state.current_session: # Đảm bảo đã chọn session rồi
         with st.expander(f"Session Information: {st.session_state.current_session}"):
             #Show selected documents
@@ -172,7 +201,7 @@ def main():
                 st.markdown("**Selected Documents:**")
                 for doc in selected_docs:
                     st.markdown(f"- {doc}")
-                    # Kiểm tra xem là URL hay file để lấy mục lục phù hợp
+                     # Kiểm tra xem là URL hay file để lấy mục lục phù hợp
                     if "http" in doc:
                         toc = get_table_of_contents(doc)
                     else:
@@ -219,13 +248,17 @@ def main():
         
 
         if st.session_state.vectorstore is not None:
-            qa_chain = init_chatbot(st.session_state.vectorstore)
+            qa_chain = init_chatbot(st.session_state.vectorstore,  internet_search = st.session_state.internet_search)
 
             if query := st.chat_input("Ask a question about the document"):  # Kiểm tra lại chỗ này
                 st.session_state[messages_key].append({"role": "user", "content": query})
                 with st.chat_message("user"):
                     st.markdown(query)
-                answer = qa_chain.invoke({"input": query})
+                if st.session_state.internet_search:
+                    with st.spinner("Searching internet"):
+                       answer = qa_chain.invoke({"input": query})
+                else:
+                      answer = qa_chain.invoke({"input": query})
                 if hasattr(answer, 'content'):
                     st.chat_message("assistant").markdown(answer.content)
                     st.session_state[messages_key].append({"role": "assistant", "content": answer.content})

@@ -1,0 +1,16 @@
+streamlit
+langchain
+langchain_google_genai
+faiss-cpu
+python-dotenv
+tiktoken
+unstructured
+beautifulsoup4
+requests
+pdfplumber
+docx2txt
+sqlalchemy
+duckduckgo-search
+pytesseract
+Pillow
+langchain_core
