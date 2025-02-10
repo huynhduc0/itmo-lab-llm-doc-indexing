@@ -14,3 +14,4 @@ duckduckgo-search
 pytesseract
 Pillow
 langchain_core
+psycopg2-binary

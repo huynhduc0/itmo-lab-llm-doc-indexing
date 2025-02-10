@@ -4,19 +4,10 @@ from langchain.chains import create_retrieval_chain
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import chain
-from langchain.tools import DuckDuckGoSearchRun
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_core.messages import BaseMessage
 
 def init_chatbot(vector_store, internet_search=False):
-    restrict = """
-    You must base your answers primarily on the context provided from the document(s).
-
-    If the context and search results don't contain information relevant to the question, simply say that you don't know. Do not make up answers.
-
-    When using search results, incorporate them seamlessly and cite sources where appropriate.
-    Always respond concisely and in a way that is easy to understand. Summarize the information, focusing on the main points and removing irrelevant details.
-    Offer advice on how to use the information to help the user understand it better.
-    Return the answer as a simple text string.
-    """
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
         gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
@@ -61,13 +52,21 @@ def generate_toc_with_llm(document_content):
     )
 
     prompt = f"""
-    Please generate a table of contents for the following document. The table of contents should be well-organized and reflect the main topics covered in the document. Return just list the headings.
+    Please generate a table of contents for the following document. The table of contents should be well-organized and reflect the main topics covered in the document. Return just a list of the headings, one heading per line.  Do not include any numbering or bullet points. Do not include "Title" as a heading unless it is explicitly provided in the document. If there are no clear headings, generate a few key topics that summarize the document's content.
     Document Content:
     {document_content}
     """
     try:
         toc = llm.invoke(prompt)
-        return toc.split('\n')
+        print(f"Generated TOC: {toc}")
+        if isinstance(toc, str):
+           return toc.split('\n')
+        elif isinstance(toc, BaseMessage):
+           print(f"Generated TOC: {toc.content}")
+           return toc.content.split('\n')
+        else:
+            print(f"Unexpected TOC format: {type(toc)}")
+            return None
     except Exception as e:
         print(f"Error generating TOC with LLM: {e}")
         return None

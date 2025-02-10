@@ -1,19 +1,17 @@
 import streamlit as st
 import os
-import tempfile
-from rag_utils import load_document, create_vector_store, load_vector_store
+from rag_utils import load_document, create_vector_store, load_vector_store, save_uploaded_file  # Import save_uploaded_file
 from chatbot import init_chatbot, generate_toc_with_llm
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_core.messages import AIMessage, HumanMessage
 from bs4 import BeautifulSoup
 import requests
 import pdfplumber
 import docx2txt
 import dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Text, PickleType
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from langchain.tools import DuckDuckGoSearchRun
+from PIL import Image
+from database import SessionLocal, ChatSession, ChatMessage, DocumentInfo, DocumentTOC  # Import database classes
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import BaseMessage  # Added import
 
 dotenv.load_dotenv()
 
@@ -21,8 +19,10 @@ dotenv.load_dotenv()
 EMBEDDER = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 UPLOAD_FOLDER = "uploaded_documents"  # Thư mục lưu trữ tài liệu
 
+
 def get_available_docs():
-    return [f for f in os.listdir('document_indexes') if not f.startswith('.')]
+    return [f for f in os.listdir('document_indexes') if not f.startswith('.') and not os.path.isfile(os.path.join('document_indexes', f))]
+
 
 def save_uploaded_file(uploaded_file):
     # Tạo thư mục nếu chưa tồn tại
@@ -32,10 +32,12 @@ def save_uploaded_file(uploaded_file):
     with open(file_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
     return file_path
+
+
 def get_table_of_contents(url):
     try:
         if not url.startswith("http://") and not url.startswith("https://"):
-            url = "https://" + url # Add https:// if no scheme is present
+            url = "https://" + url  # Add https:// if no scheme is present
         response = requests.get(url)
         response.raise_for_status()  # Raise an exception for bad status codes
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -54,6 +56,7 @@ def get_table_of_contents(url):
         print(f"Error parsing HTML: {e}")
         return None
 
+
 def get_table_of_contents_pdf(file_path):
     try:
         pdf = pdfplumber.open(file_path)
@@ -61,7 +64,7 @@ def get_table_of_contents_pdf(file_path):
         for page in pdf.pages:
             for element in page.extract_words():
                 # Check if the word looks like a heading (e.g., bold, large font)
-                if element["fontname"] and "Bold" in element["fontname"] and element["size"] > 10:
+                if element.get("fontname") and "Bold" in element.get("fontname") and element["size"] > 10:
                     toc.append(element["text"])
         pdf.close()
         return toc
@@ -69,26 +72,174 @@ def get_table_of_contents_pdf(file_path):
         print(f"Error processing PDF: {e}")
         return None
 
+
 def get_table_of_contents_docx(file_path):
-  try:
-    text = docx2txt.process(file_path)
-    # Split the text into lines and find those that look like headings
-    lines = text.split("\n")
-    toc = []
-    for line in lines:
-      line = line.strip()  # Remove leading/trailing whitespace
-      if line and (line.startswith("Chapter") or line.startswith("Section")):
-        toc.append(line)
-    return toc
-  except:
-    return None
+    try:
+        text = docx2txt.process(file_path)
+        return generate_toc_with_llm(text)
+    except Exception as e:
+        print(f"Error generating TOC with LLM: {e}")
+        return None
+
+
+def generate_toc_with_llm(document_content):
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
+        gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
+        temperature=0,  # or other parameters
+    )
+
+    prompt = f"""
+    Please generate a table of contents for the following document. The table of contents should be well-organized and reflect the main topics covered in the document. Return just a list of the headings, one heading per line.  Do not include any numbering or bullet points. Do not include "Title" as a heading unless it is explicitly provided in the document. If there are no clear headings, generate a few key topics that summarize the document's content.
+    Document Content:
+    {document_content}
+    """
+    try:
+        toc = llm.invoke(prompt)
+        print(f"Generated TOC: {toc}")
+        if isinstance(toc, str):
+            return toc.split('\n')
+        elif isinstance(toc, BaseMessage):
+            print(f"Generated TOC: {toc.content}")
+            return toc.content.split('\n')
+        else:
+            print(f"Unexpected TOC format: {type(toc)}")
+            return None
+    except Exception as e:
+        print(f"Error generating TOC with LLM: {e}")
+        return None
+
+
+def process_document(db, file=None, url=None):
+    """Load document and create vectorstore."""
+    if not file and not url:
+        st.warning('Please load a document or enter a URL.')
+        return None
+
+    with st.spinner():
+        if file:
+            # Lưu file tải lên
+            file_path = save_uploaded_file(file)
+            doc_name = file.name[:file.name.index('.')]
+            st.session_state.doc_name = doc_name
+            st.session_state.doc_url = None
+
+            try:  # New
+                elements = load_document(file_path=file_path)
+                # OCR
+                # Check and load file
+                vectorstore = create_vector_store(elements, doc_name, EMBEDDER)
+                if vectorstore:
+                    st.session_state.vectorstore = vectorstore
+                    st.success('Vector store successfully ✔️')
+                    file_extension = os.path.splitext(file_path)[1].lower()
+
+                    if file_extension == ".pdf":
+                        toc = get_table_of_contents_pdf(file_path)
+                        if not toc:
+                            doc_content = load_document(file_path=file_path)
+                            toc = generate_toc_with_llm(doc_content)
+                    elif file_extension == ".docx" or file_extension == ".doc":
+                        toc = get_table_of_contents_docx(file_path)
+                    else:
+                        toc = None
+
+                    # Save TOC to database
+                    if toc:
+                        existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == doc_name).first()
+                        if existing_toc:
+                            existing_toc.toc_items = toc
+                        else:
+                            db_toc = DocumentTOC(doc_name=doc_name, toc_items=toc)
+                            db.add(db_toc)
+                        db.commit()
+                        st.session_state.doc_toc = toc  # Store in session state after saving to db
+                    else:
+                        st.session_state.doc_toc = None  # or some default value to indicate no toc.
+
+                return  # Return to the next state to update or load.
+
+            except Exception as e:  # New
+                db.rollback()
+                st.error(f"Error loading {file_path}: {e}")  # New
+                return None
+
+        elif url:  # Nếu có URL
+            st.session_state.doc_url = url
+            doc = load_document(url=url)
+            doc_name = url.replace("/", "_").replace(":", "_")
+            st.session_state.doc_name = doc_name
+            st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
+        st.success('Document load successfully ✔️')
+        return st.session_state.vectorstore
+
+
+def display_messages(messages_key):
+    """Displays the chat messages."""
+    if messages_key in st.session_state:
+        for message in st.session_state[messages_key]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+
+def show_document_section(selected_toc_item):
+    """Displays the document section content."""
+    if st.session_state.vectorstore:
+        # Assuming your vectorstore has a way to search for similar content
+        # This is a VERY basic example and may not work directly
+
+        if isinstance(selected_toc_item, str):  # PDF Case
+            results = st.session_state.vectorstore.similarity_search(selected_toc_item, k=3)  # Get top 3 matches
+        else:  # Web Scraped Case (assuming you have the ID)
+            results = st.session_state.vectorstore.similarity_search(selected_toc_item["text"], k=3)  # Get top 3 matches
+
+        if results:
+            for doc in results:
+                st.write(doc.page_content)  # Display content of matched documents
+
+        else:
+            st.write("No matching content found.")
+
+    else:
+        st.write("No document loaded.")
+
+
+def get_session_options(db):
+    """Fetch chat sessions from the database."""
+    sessions = db.query(ChatSession).all()
+    return {session.session_key: session for session in sessions}  # Return a dict
+
+def delete_session(db, session_key):
+    """Deletes a chat session and its messages from the database."""
+    try:
+        # Get the session to delete
+        session_to_delete = db.query(ChatSession).filter(ChatSession.session_key == session_key).first()
+
+        if session_to_delete:
+            # Delete associated messages first
+            db.query(ChatMessage).filter(ChatMessage.session_key == session_key).delete()
+
+            # Delete the session
+            db.delete(session_to_delete)
+
+            db.commit()
+            st.success(f"Session '{session_key}' and its messages deleted successfully!")
+            return True  # Indicate successful deletion
+        else:
+            st.warning(f"Session '{session_key}' not found.")
+            return False  # Indicate session not found
+    except Exception as e:
+        db.rollback()
+        st.error(f"Error deleting session '{session_key}': {e}")
+        return False  # Indicate deletion failure
+
 
 def main():
     # Initialize session state
     if 'chat_sessions' not in st.session_state:
-        st.session_state.chat_sessions = {}  # Lưu trữ thông tin phiên
+        st.session_state.chat_sessions = {}
     if 'current_session' not in st.session_state:
-        st.session_state.current_session = None # Khởi tạo là None
+        st.session_state.current_session = None
     if 'all_docs_messages' not in st.session_state:
         st.session_state.all_docs_messages = []
     if 'vectorstore' not in st.session_state:
@@ -100,9 +251,25 @@ def main():
     if 'doc_toc' not in st.session_state:
         st.session_state.doc_toc = None
     if 'chat_mode' not in st.session_state:
-        st.session_state.chat_mode = "File hiện tại"  # Mặc định chat trên file hiện tại
+        st.session_state.chat_mode = "File hiện tại"
+    if 'deep_reasoning' not in st.session_state:
+        st.session_state.deep_reasoning = False
     if 'internet_search' not in st.session_state:
         st.session_state.internet_search = False
+    if 'elements' not in st.session_state:
+        st.session_state.elements = None
+    if 'modal_open' not in st.session_state:
+        st.session_state.modal_open = False
+    if 'selected_toc_item' not in st.session_state:
+        st.session_state.selected_toc_item = None
+    if 'show_doc_section' not in st.session_state:
+        st.session_state.show_doc_section = False
+    if 'show_db_admin' not in st.session_state:
+        st.session_state.show_db_admin = False
+    if 'delete_session_key' not in st.session_state:
+        st.session_state.delete_session_key = None
+    if 'confirm_delete' not in st.session_state:
+        st.session_state.confirm_delete = False
 
     st.title("Docs Assistant")
 
@@ -111,49 +278,19 @@ def main():
 
         st.markdown('## New Document')
         file = st.file_uploader(label='')
-        url = st.text_input("Enter a URL", key="url_input") # Thêm ô nhập URL
+        url = st.text_input("Enter a URL", key="url_input")  # Thêm ô nhập URL
         applied = st.button(label='📄 Load Document')  # Button Load Document
 
         # if apply button clicked
         if applied:
-            # if no file uploaded, warn the user
-            if not file and not url:
-                st.warning('Please load a document or enter a URL.')
-            # if a file is uplaoded, read and create the embedding
-            else:
-                with st.spinner():
-                    if file:
-                        # Lưu file tải lên
-                        file_path = save_uploaded_file(file)
-                        doc_name = file.name[:file.name.index('.')]
-                        st.session_state.doc_name = doc_name
-                        st.session_state.doc_url = None
-                        doc = load_document(file_path=file_path)
-                        st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
-                        file_extension = os.path.splitext(file_path)[1].lower()
-                        if file_extension == ".pdf":
-                            toc = get_table_of_contents_pdf(file_path)
-                            if not toc:
-                                doc_content = load_document(file_path=file_path)
-                                toc = generate_toc_with_llm(doc_content)
-                        elif file_extension == ".docx" or file_extension == ".doc":
-                            toc = get_table_of_contents_docx(file_path)
-                        else:
-                            toc = None
-                        st.session_state.doc_toc = toc
-
-                    elif url: # Nếu có URL
-                        doc = load_document(url=url)
-                        doc_name = url.replace("/", "_").replace(":", "_")
-                        st.session_state.doc_name = doc_name
-                        st.session_state.doc_url = url  # Lưu URL gốc
-                        st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
-                        toc = get_table_of_contents(url)
-                        st.session_state.doc_toc = toc
-                    st.success('Document load successfully ✔️')
-
-                # Xóa file tạm sau khi xử lý xong
-                # os.remove(file_path) # <--  Bạn có thể bỏ dòng này nếu muốn giữ lại file tạm
+            with SessionLocal() as db:
+                try:  # To manage exceptions.
+                    st.session_state.vectorstore = process_document(db=db, file=file, url=url)
+                except Exception as e:
+                    db.rollback()  # Rollback if there was an error.
+                    st.error(f"Error during document loading: {e}")  # Display
+                finally:
+                    db.close()  # close the database to free resource.
 
         st.markdown('## Chat Sessions')
         with st.form("new_session_form", clear_on_submit=True):
@@ -162,109 +299,190 @@ def main():
             create_session = st.form_submit_button("Create New Session")
 
             if create_session:
-                session_key = session_name.replace(" ", "_") # Tạo key từ tên session
-                if session_key in st.session_state.chat_sessions:
-                    st.warning(f"Session '{session_name}' already exists. Please use a different name.")
-                else:
-                    st.session_state.chat_sessions[session_key] = selected_docs
-                    st.session_state.current_session = session_key
-                    # Cập nhật vector store khi tạo session mới
-                    if selected_docs:
-                        # Load vector store của file đầu tiên trong danh sách
-                        st.session_state.vectorstore = load_vector_store(selected_docs[0], EMBEDDER)
+                with SessionLocal() as db:
+                    session_key = session_name.replace(" ", "_")  # Tạo key từ tên session
+                    if session_key in st.session_state.chat_sessions:
+                        st.warning(f"Session '{session_name}' already exists. Please use a different name.")
                     else:
-                        st.session_state.vectorstore = None # Set về None nếu không có file nào được chọn
+                        st.session_state.chat_sessions[session_key] = selected_docs
+                        db_session = ChatSession(session_key=session_key, selected_docs=selected_docs)
+                        db.add(db_session)
+                        db.commit()
+                        st.session_state.current_session = session_key
 
-        session_options = list(st.session_state.chat_sessions.keys())
-        if session_options:
-            new_session = st.selectbox("Select Session", session_options, key="session_selectbox")
-            if new_session != st.session_state.current_session:
-                st.session_state.current_session = new_session
-                selected_docs = st.session_state.chat_sessions[new_session]
-                # Cập nhật vector store khi chọn session
+                        # Load TOC and Vectorstore of file đầu tiên trong danh sách
+                        if selected_docs:
+                            # Load vector store của file đầu tiên trong danh sách
+                            st.session_state.vectorstore = load_vector_store(selected_docs[0], EMBEDDER)
+
+                            # Load TOC from the database
+                            db_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == selected_docs[0]).first()
+                            if db_toc:
+                                st.session_state.doc_toc = db_toc.toc_items
+                            else:
+                                st.session_state.doc_toc = None
+
+                        else:
+                            st.session_state.vectorstore = None  # Set về None nếu không có file nào được chọn
+                            st.session_state.doc_toc = None
+
+        # Load session options from the database
+        with SessionLocal() as db:
+            session_options = get_session_options(db)
+            session_keys = list(session_options.keys())
+
+            # Collapsible session list
+            with st.expander("Session List", expanded=True):
+                for session_key in session_keys:
+                    cols = st.columns([0.7, 0.3])  # Adjust column ratio as needed
+                    with cols[0]:
+                        if st.button(session_key, key=f"session_{session_key}"):
+                            st.session_state.current_session = session_key
+                    with cols[1]:
+                         if st.button("Delete", key=f"delete_{session_key}"): # Use normal button
+                            st.session_state.delete_session_key = session_key
+                            st.session_state.confirm_delete = True
+
+            # Confirmation dialog for deletion
+            if st.session_state.confirm_delete and st.session_state.delete_session_key:
+                st.warning(f"Are you sure you want to delete session '{st.session_state.delete_session_key}'? This action cannot be undone.")
+                delete_cols = st.columns(2)
+                with delete_cols[0]:
+                    if st.button("Confirm Delete", key="confirm_delete_button"):
+                        if delete_session(db, st.session_state.delete_session_key):
+                            # Reset states after successful deletion
+                            st.session_state.current_session = None
+                            st.session_state.delete_session_key = None
+                            st.session_state.confirm_delete = False
+                            # No longer need to clear query params or rerun
+                            st.rerun()  # Refresh the list
+                with delete_cols[1]:
+                    if st.button("Cancel", key="cancel_delete_button"):
+                        st.session_state.delete_session_key = None
+                        st.session_state.confirm_delete = False
+                         # No longer need to clear query params or rerun
+
+            # Load session data if a session is selected
+            if st.session_state.current_session and st.session_state.current_session in session_options:
+                selected_session = session_options[st.session_state.current_session]
+                selected_docs = selected_session.selected_docs
+                st.session_state.chat_sessions[st.session_state.current_session] = selected_docs
+
+                # Load vector store and TOC
                 if selected_docs:
                     st.session_state.vectorstore = load_vector_store(selected_docs[0], EMBEDDER)
+                    db_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == selected_docs[0]).first()
+                    if db_toc:
+                        st.session_state.doc_toc = db_toc.toc_items
+                    else:
+                        st.session_state.doc_toc = None
                 else:
                     st.session_state.vectorstore = None
+                    st.session_state.doc_toc = None
+            elif session_keys:
+                st.info("Select a chat session.") #If there's no current session, and session keys, tell the user to select a session
+            else:
+                st.info("Create a chat session to start.")
 
-        else:
-            st.info("Create a chat session to start.")
+        st.markdown("## Options")
+        internet_search = st.toggle("Enable Internet Search", value=False)
 
-        #Options outside sidebar.
-        st.session_state.internet_search = st.toggle("Enable Internet Search", value=False)
+    # Main Chat Interface
+    col1, col2 = st.columns([2, 1])  # Adjust column ratios
 
-    if st.session_state.current_session: # Đảm bảo đã chọn session rồi
-        with st.expander(f"Session Information: {st.session_state.current_session}"):
-            #Show selected documents
-            selected_docs = st.session_state.chat_sessions.get(st.session_state.current_session, [])
-            if selected_docs:
-                st.markdown("**Selected Documents:**")
-                for doc in selected_docs:
-                    st.markdown(f"- {doc}")
-                     # Kiểm tra xem là URL hay file để lấy mục lục phù hợp
-                    if "http" in doc:
-                        toc = get_table_of_contents(doc)
+    with col1:
+        if st.session_state.current_session:  # Đảm bảo đã chọn session rồi
+            with st.expander(f"Session Information: {st.session_state.current_session}"):
+                # Show selected documents
+                selected_docs = st.session_state.chat_sessions.get(st.session_state.current_session, [])
+                if selected_docs:
+                    st.markdown("**Selected Documents:**")
+                    for doc in selected_docs:
+                        st.markdown(f"- {doc}")
+
+            # Display Document Section here, right after Session Info
+            if st.session_state.show_doc_section:
+                st.markdown("---")  # Add a visual separator
+                st.markdown(f"### Document Section: {st.session_state.selected_toc_item}")
+                show_document_section(st.session_state.selected_toc_item)
+
+                if st.button("Close Document Section"):
+                    st.session_state.show_doc_section = False
+                    st.session_state.selected_toc_item = None
+
+            # Main chat area
+            if st.session_state.elements is not None:
+                st.markdown("**Images:**")
+                for element in st.session_state.elements:
+                    if isinstance(element, Image.Image):
+                        st.image(element)
                     else:
-                         file_extension = os.path.splitext(doc)[1].lower()
-                         if file_extension == ".pdf":
-                            toc = get_table_of_contents_pdf(doc)
-                            if not toc:
-                                doc_content = load_document(file_path=doc)
-                                toc = generate_toc_with_llm(doc_content)
-                         elif file_extension == ".docx" or file_extension == ".doc":
-                             toc = get_table_of_contents_docx(doc)
-                         else:
-                             toc = None
-                    if toc:
-                         st.markdown("**Table of Contents**")
-                         for item in toc:
-                            st.markdown(f"- {item}")
+                        st.info("Image can not load")
+
+            messages_key = f"{st.session_state.current_session}_messages"
+
+            if messages_key not in st.session_state:
+                st.session_state[messages_key] = []
+
+            # Load messages from the database:
+            with SessionLocal() as db:
+                db_messages = db.query(ChatMessage).filter(ChatMessage.session_key == st.session_state.current_session).all()
+                st.session_state[messages_key] = [{"role": msg.role, "content": msg.content} for msg in db_messages]
+
+            for message in st.session_state[messages_key]:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+            is_searching = False
+            if st.session_state.vectorstore is not None:
+                qa_chain = init_chatbot(st.session_state.vectorstore, internet_search=internet_search)
+
+                if query := st.chat_input("Ask a question about the document"):  # Kiểm tra lại chỗ này
+                   # Save user message to the database
+                    with SessionLocal() as db:
+                        user_message = ChatMessage(session_key=st.session_state.current_session, role="user", content=query)
+                        db.add(user_message)
+                        db.commit()
+
+                    st.session_state[messages_key].append({"role": "user", "content": query})
+                    with st.chat_message("user"):
+                        st.markdown(query)
+
+                    with SessionLocal() as db:
+                        if st.session_state.internet_search:
+                            with st.spinner("Searching internet"):
+                                answer = qa_chain.invoke({"input": query})
+                        else:
+                            answer = qa_chain.invoke({"input": query})
+                        if hasattr(answer, 'content'):
+                            st.session_state[messages_key].append({"role": "assistant", "content": answer.content})  # Save message
+                            st.chat_message("assistant").markdown(answer.content)
+                            new_message = ChatMessage(session_key=st.session_state.current_session, role="assistant",
+                                                      content=answer.content)
+                            db.add(new_message)
+                            db.commit()
+                        else:
+                            st.session_state[messages_key].append({"role": "assistant", "content": str(answer)})  # Save message
+                            st.chat_message("assistant").markdown(str(answer))
+                            new_message = ChatMessage(session_key=st.session_state.current_session, role="assistant",
+                                                      content=str(answer))
+                            db.add(new_message)
+                            db.commit()
 
             else:
-                st.info("No document selected in this session")
+                st.info("Please load a document")
 
-            new_file = st.file_uploader("Add more documents", key="add_file_to_session")
-            if new_file is not None:
-                with st.spinner():
-                    file_path = save_uploaded_file(new_file)
-                    new_doc_name = new_file.name[:new_file.name.index('.')]
-                    doc = load_document(file_path=file_path)
-                    new_vectorstore = create_vector_store(doc, new_doc_name, EMBEDDER)
+    with col2:
+        if st.session_state.current_session and st.session_state.doc_toc:  # Only show if there's a session and a TOC
+            with st.expander("Table of Contents", expanded=True):
+                for i, item in enumerate(st.session_state.doc_toc):
+                    # Ensure item is not None and is a string
+                    if item and isinstance(item, str):  # Check for None and string type
+                        toc_text = item
+                        if st.button(toc_text, key=f"toc_{i}_main"):
+                            st.session_state.show_doc_section = True
+                            st.session_state.selected_toc_item = toc_text
 
-                    #Cập nhật lại session state
-                    st.session_state.chat_sessions[st.session_state.current_session].append(new_doc_name)
-                    #Cập nhật vector store nếu cần
-                    st.session_state.vectorstore = load_vector_store(new_doc_name, EMBEDDER)
-                    st.success(f'Document {new_doc_name} load successfully ✔️')
 
-        messages_key = f"{st.session_state.current_session}_messages"
-
-        if messages_key not in st.session_state:
-            st.session_state[messages_key] = []
-
-        for message in st.session_state[messages_key]:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-        
-
-        if st.session_state.vectorstore is not None:
-            qa_chain = init_chatbot(st.session_state.vectorstore,  internet_search = st.session_state.internet_search)
-
-            if query := st.chat_input("Ask a question about the document"):  # Kiểm tra lại chỗ này
-                st.session_state[messages_key].append({"role": "user", "content": query})
-                with st.chat_message("user"):
-                    st.markdown(query)
-                if st.session_state.internet_search:
-                    with st.spinner("Searching internet"):
-                       answer = qa_chain.invoke({"input": query})
-                else:
-                      answer = qa_chain.invoke({"input": query})
-                if hasattr(answer, 'content'):
-                    st.chat_message("assistant").markdown(answer.content)
-                    st.session_state[messages_key].append({"role": "assistant", "content": answer.content})
-                else:
-                    st.chat_message("assistant").markdown(answer)
-                    st.session_state[messages_key].append({"role": "assistant", "content": answer})
-
-        else:
-            st.info("Please load a document")
+if __name__ == "__main__":
+    main()

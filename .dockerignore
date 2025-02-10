@@ -1,0 +1,9 @@
+**/__pycache__
+*.pyc
+*.log
+*.db
+.git
+venv
+uploaded_documents
+document_indexes
+temp_files
