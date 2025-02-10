@@ -19,7 +19,11 @@ def init_chatbot(vector_store, internet_search=False):
                 "system",
                 """You are a helpful and expert document assistant. You will be given a question, a context, and, if available, search results from the internet. Your job is to answer the question as accurately and helpfully as possible.
 
-                """ +
+                You must primarily base your answers on the context provided from the document(s).
+
+                If the context and search results don't contain information relevant to the question, simply say that you don't know. Do not make up answers.
+
+               """ +
                 (""" You have access to the internet search results. Use them to add breadth and depth to your responses, providing more comprehensive and up-to-date information.""" if internet_search else "") +
                 """\n\nContext:\n\n{context}""",
             ),
