@@ -12,6 +12,8 @@ from PIL import Image
 from database import SessionLocal, ChatSession, ChatMessage, DocumentInfo, DocumentTOC  # Import database classes
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage  # Added import
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
 
 dotenv.load_dotenv()
 
@@ -19,6 +21,15 @@ dotenv.load_dotenv()
 EMBEDDER = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
 UPLOAD_FOLDER = "uploaded_documents"  # Thư mục lưu trữ tài liệu
 
+# Database configuration from environment variables
+DB_TYPE = os.getenv("DB_TYPE", "sqlite")  # Default to SQLite if not specified
+DB_URI = os.getenv("DB_URI", "sqlite:///./doc_assistant.db")  # SQLite default
+
+# Create engine based on DB_TYPE
+engine = create_engine(DB_URI)
+
+#Create database session
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_available_docs():
     return [f for f in os.listdir('document_indexes') if not f.startswith('.') and not os.path.isfile(os.path.join('document_indexes', f))]
@@ -259,7 +270,7 @@ def main():
     if 'elements' not in st.session_state:
         st.session_state.elements = None
     if 'modal_open' not in st.session_state:
-        st.session_state.modal_open = False
+        st.session_state.modal_open = None
     if 'selected_toc_item' not in st.session_state:
         st.session_state.selected_toc_item = None
     if 'show_doc_section' not in st.session_state:
@@ -273,6 +284,7 @@ def main():
 
     st.title("Docs Assistant")
 
+    # Main sidebar for main controls
     with st.sidebar:
         st.title('DocAssistant')
 
@@ -326,7 +338,10 @@ def main():
                             st.session_state.vectorstore = None  # Set về None nếu không có file nào được chọn
                             st.session_state.doc_toc = None
 
-        # Load session options from the database
+        # Database configuration
+        DB_TYPE = os.getenv("DB_TYPE", "sqlite")  # Default to SQLite
+        DB_URI = os.getenv("DB_URI", "sqlite:///./doc_assistant.db")  # SQLite default
+
         with SessionLocal() as db:
             session_options = get_session_options(db)
             session_keys = list(session_options.keys())
@@ -388,7 +403,7 @@ def main():
         internet_search = st.toggle("Enable Internet Search", value=False)
 
     # Main Chat Interface
-    col1, col2 = st.columns([2, 1])  # Adjust column ratios
+    col1, col2 = st.columns([3, 1])  # Adjust column ratios
 
     with col1:
         if st.session_state.current_session:  # Đảm bảo đã chọn session rồi
@@ -437,52 +452,83 @@ def main():
             if st.session_state.vectorstore is not None:
                 qa_chain = init_chatbot(st.session_state.vectorstore, internet_search=internet_search)
 
-                if query := st.chat_input("Ask a question about the document"):  # Kiểm tra lại chỗ này
-                   # Save user message to the database
-                    with SessionLocal() as db:
-                        user_message = ChatMessage(session_key=st.session_state.current_session, role="user", content=query)
-                        db.add(user_message)
-                        db.commit()
+                # Adding st.container to pin the chat input
+                with st.container():
+                    st.markdown(
+                        """
+                        <style>
+                        .fixed-bottom {
+                            position: fixed;
+                            bottom: 0;
+                            left: 0;
+                            width: 100%;
+                            background-color: #f0f2f6; /* Adjust color as needed */
+                            padding: 10px;
+                            z-index: 1000; /* Ensure it's on top of other elements */
+                        }
+                        </style>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-                    st.session_state[messages_key].append({"role": "user", "content": query})
-                    with st.chat_message("user"):
-                        st.markdown(query)
+                    # Put chat input into the container
+                    with st.container():
+                        if query := st.chat_input("Ask a question about the document"):  # Kiểm tra lại chỗ này
+                           # Save user message to the database
+                            with SessionLocal() as db:
+                                user_message = ChatMessage(session_key=st.session_state.current_session, role="user", content=query)
+                                db.add(user_message)
+                                db.commit()
 
-                    with SessionLocal() as db:
-                        if st.session_state.internet_search:
-                            with st.spinner("Searching internet"):
-                                answer = qa_chain.invoke({"input": query})
-                        else:
-                            answer = qa_chain.invoke({"input": query})
-                        if hasattr(answer, 'content'):
-                            st.session_state[messages_key].append({"role": "assistant", "content": answer.content})  # Save message
-                            st.chat_message("assistant").markdown(answer.content)
-                            new_message = ChatMessage(session_key=st.session_state.current_session, role="assistant",
-                                                      content=answer.content)
-                            db.add(new_message)
-                            db.commit()
-                        else:
-                            st.session_state[messages_key].append({"role": "assistant", "content": str(answer)})  # Save message
-                            st.chat_message("assistant").markdown(str(answer))
-                            new_message = ChatMessage(session_key=st.session_state.current_session, role="assistant",
-                                                      content=str(answer))
-                            db.add(new_message)
-                            db.commit()
+                            st.session_state[messages_key].append({"role": "user", "content": query})
+                            with st.chat_message("user"):
+                                st.markdown(query)
+
+                            with SessionLocal() as db:
+                                if st.session_state.internet_search:
+                                    with st.spinner("Searching internet"):
+                                        answer = qa_chain.invoke({"input": query})
+                                else:
+                                    answer = qa_chain.invoke({"input": query})
+                                if hasattr(answer, 'content'):
+                                    st.session_state[messages_key].append({"role": "assistant", "content": answer.content})  # Save message
+                                    st.chat_message("assistant").markdown(answer.content)
+                                    new_message = ChatMessage(session_key=st.session_state.current_session, role="assistant",
+                                                              content=answer.content)
+                                    db.add(new_message)
+                                    db.commit()
+                                else:
+                                    st.session_state[messages_key].append({"role": "assistant", "content": str(answer)})  # Save message
+                                    st.chat_message("assistant").markdown(str(answer))
+                                    new_message = ChatMessage(session_key=st.session_state.current_session, role="assistant",
+                                                              content=str(answer))
+                                    db.add(new_message)
+                                    db.commit()
 
             else:
                 st.info("Please load a document")
 
+
     with col2:
-        if st.session_state.current_session and st.session_state.doc_toc:  # Only show if there's a session and a TOC
-            with st.expander("Table of Contents", expanded=True):
-                for i, item in enumerate(st.session_state.doc_toc):
-                    # Ensure item is not None and is a string
-                    if item and isinstance(item, str):  # Check for None and string type
-                        toc_text = item
-                        if st.button(toc_text, key=f"toc_{i}_main"):
-                            st.session_state.show_doc_section = True
-                            st.session_state.selected_toc_item = toc_text
+        show_toc()
+
+def show_toc():
+    """Displays the table of contents."""
+    st.header("Table of Contents")
+    if st.session_state.current_session and st.session_state.doc_toc:
+        with st.expander("Table of Contents", expanded=True):
+            for i, item in enumerate(st.session_state.doc_toc):
+                if item and isinstance(item, str):
+                    toc_text = item
+                    if st.button(toc_text, key=f"toc_{i}_main"):
+                        st.session_state.show_doc_section = True
+                        st.session_state.selected_toc_item = toc_text
+    else:
+        st.info("No document loaded or no table of contents available for this session.")
 
 
 if __name__ == "__main__":
+    # This is to ensure tables are created on app startup
+    from database import Base, engine
+    Base.metadata.create_all(engine)
     main()

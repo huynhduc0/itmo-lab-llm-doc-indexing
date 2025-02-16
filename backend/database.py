@@ -1,17 +1,18 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, PickleType
+from sqlalchemy import create_engine, Column, Integer, String, PickleType
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import Identity
 import os
 
-POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "docs_assistant")
-DATABASE_URL = f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@localhost:5432/{POSTGRES_DB}" 
-print(DATABASE_URL)
-engine = create_engine(DATABASE_URL)
-
 Base = declarative_base()
+
+# Database configuration
+DB_TYPE = os.getenv("DB_TYPE", "sqlite")  # Default to SQLite if not specified
+DB_URI = os.getenv("DB_URI", "sqlite:///./doc_assistant.db")  # SQLite default
+
+# Create engine based on DB_TYPE and DB_URI
+engine = create_engine(DB_URI)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
@@ -29,13 +30,13 @@ class ChatMessage(Base):
 
 class DocumentInfo(Base):
     __tablename__ = "document_info"
-    id = Column(Integer, primary_key=True)  # THIS LINE IS CRUCIAL
-    doc_name = Column(String, unique=True) # Ensure doc_name is unique
+    id = Column(Integer, primary_key=True)
+    doc_name = Column(String, unique=True)
 
 class DocumentTOC(Base):
-   __tablename__ = "document_toc"
-   id = Column(Integer, primary_key=True)
-   doc_name = Column(String, unique=True) # Link to doc, ensure doc_name is unique
-   toc_items = Column(PickleType) # Store TOC as a list using PickleType
+    __tablename__ = "document_toc"
+    id = Column(Integer, primary_key=True)
+    doc_name = Column(String, unique=True)
+    toc_items = Column(PickleType)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(engine)  # Create tables if they don't exist
