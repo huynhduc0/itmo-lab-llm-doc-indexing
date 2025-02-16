@@ -24,3 +24,5 @@ __pycache__/
 #doc
 document_indexes/
 uploaded_documents/
+document_chunks/
+doc_assistant.db

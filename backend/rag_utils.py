@@ -1,16 +1,11 @@
 import os
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.vectorstores import FAISS
-from langchain.document_loaders import UnstructuredFileLoader
-from langchain.document_loaders import WebBaseLoader
 from bs4 import BeautifulSoup
 import requests
 from langchain.docstore.document import Document
 import pytesseract
-from PIL import Image
 import pdfplumber
-from io import BytesIO
 from unstructured.partition.auto import partition
 from langchain_core.documents import Document
 import docx2txt

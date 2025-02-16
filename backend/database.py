@@ -26,7 +26,7 @@ class ChatMessage(Base):
     id = Column(Integer, primary_key=True)
     session_key = Column(String)
     role = Column(String)
-    content = Column(String)
+    content = Column(String(4000))
 
 class DocumentInfo(Base):
     __tablename__ = "document_info"

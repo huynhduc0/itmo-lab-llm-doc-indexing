@@ -14,6 +14,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage  # Added import
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
+from typing import List, Dict
 
 dotenv.load_dotenv()
 
@@ -41,9 +42,8 @@ def save_uploaded_file(uploaded_file):
         os.makedirs(UPLOAD_FOLDER)
     file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
     with open(file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
+        f.write(uploaded_file.get_buffer())
     return file_path
-
 
 def get_table_of_contents(url):
     try:
@@ -53,36 +53,23 @@ def get_table_of_contents(url):
         response.raise_for_status()  # Raise an exception for bad status codes
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Find all heading tags (h1, h2, h3, h4, h5', 'h6'])
-        heading_tags = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
-
-        toc = []
-        for tag in heading_tags:
-            toc.append({"text": tag.text, "id": tag.get('id')})
-        return toc
+        # Extract text content from the webpage for LLM
+        webpage_content = soup.get_text()
+        return generate_toc_with_llm(webpage_content)
     except requests.exceptions.RequestException as e:
         print(f"Error fetching URL: {e}")
-        return None
+        return []
     except Exception as e:
         print(f"Error parsing HTML: {e}")
-        return None
-
+        return []
 
 def get_table_of_contents_pdf(file_path):
     try:
-        pdf = pdfplumber.open(file_path)
-        toc = []
-        for page in pdf.pages:
-            for element in page.extract_words():
-                # Check if the word looks like a heading (e.g., bold, large font)
-                if element.get("fontname") and "Bold" in element.get("fontname") and element["size"] > 10:
-                    toc.append(element["text"])
-        pdf.close()
-        return toc
+        doc_content = load_document(file_path=file_path)
+        return generate_toc_with_llm(doc_content)
     except Exception as e:
         print(f"Error processing PDF: {e}")
         return None
-
 
 def get_table_of_contents_docx(file_path):
     try:
@@ -109,20 +96,40 @@ def generate_toc_with_llm(document_content):
         toc = llm.invoke(prompt)
         print(f"Generated TOC: {toc}")
         if isinstance(toc, str):
-            return toc.split('\n')
+            return [item.strip() for item in toc.split('\n') if item.strip()]  # Remove empty strings
         elif isinstance(toc, BaseMessage):
             print(f"Generated TOC: {toc.content}")
-            return toc.content.split('\n')
+            return [item.strip() for item in toc.content.split('\n') if item.strip()] # Remove empty strings
         else:
             print(f"Unexpected TOC format: {type(toc)}")
-            return None
+            return []
     except Exception as e:
         print(f"Error generating TOC with LLM: {e}")
-        return None
+        return []
 
+def chunk_document_by_toc(document_content: str, toc: List[str]) -> Dict[str, str]:
+    """
+    Chunks the document content based on the table of contents.
+    Very simple implementation: assumes that each TOC entry starts a new section
+    """
+    chunks = {}
+    for i in range(len(toc)):
+        title = toc[i]
+        start_index = document_content.find(title)
+        if start_index != -1:
+            if i < len(toc) - 1:
+                next_title = toc[i+1]
+                end_index = document_content.find(next_title)
+                if end_index != -1:
+                    chunks[title] = document_content[start_index:end_index]
+                else:
+                    chunks[title] = document_content[start_index:]
+            else:
+                chunks[title] = document_content[start_index:] # last chunk
+    return chunks
 
 def process_document(db, file=None, url=None):
-    """Load document and create vectorstore."""
+    """Load document, create vectorstore, and chunk the content."""
     if not file and not url:
         st.warning('Please load a document or enter a URL.')
         return None
@@ -136,37 +143,36 @@ def process_document(db, file=None, url=None):
             st.session_state.doc_url = None
 
             try:  # New
-                elements = load_document(file_path=file_path)
-                # OCR
-                # Check and load file
+                # Load document content
+                doc_content = load_document(file_path=file_path)
+
+                # Generate TOC
+                toc = generate_toc_with_llm(doc_content)
+                st.session_state.doc_toc = toc
+
+                # Chunk document
+                st.session_state.doc_chunks = chunk_document_by_toc(doc_content, toc)
+
+                elements = load_document(file_path=file_path) #For vectorstore
+
+                # Create vectorstore
                 vectorstore = create_vector_store(elements, doc_name, EMBEDDER)
                 if vectorstore:
                     st.session_state.vectorstore = vectorstore
                     st.success('Vector store successfully ✔️')
-                    file_extension = os.path.splitext(file_path)[1].lower()
 
-                    if file_extension == ".pdf":
-                        toc = get_table_of_contents_pdf(file_path)
-                        if not toc:
-                            doc_content = load_document(file_path=file_path)
-                            toc = generate_toc_with_llm(doc_content)
-                    elif file_extension == ".docx" or file_extension == ".doc":
-                        toc = get_table_of_contents_docx(file_path)
+                # Save TOC to database
+                if toc:
+                    existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == doc_name).first()
+                    if existing_toc:
+                        existing_toc.toc_items = toc
                     else:
-                        toc = None
-
-                    # Save TOC to database
-                    if toc:
-                        existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == doc_name).first()
-                        if existing_toc:
-                            existing_toc.toc_items = toc
-                        else:
-                            db_toc = DocumentTOC(doc_name=doc_name, toc_items=toc)
-                            db.add(db_toc)
-                        db.commit()
-                        st.session_state.doc_toc = toc  # Store in session state after saving to db
-                    else:
-                        st.session_state.doc_toc = None  # or some default value to indicate no toc.
+                        db_toc = DocumentTOC(doc_name=doc_name, toc_items=toc)
+                        db.add(db_toc)
+                    db.commit()
+                    st.session_state.doc_toc = toc  # Store in session state after saving to db
+                else:
+                    st.session_state.doc_toc = None  # or some default value to indicate no toc.
 
                 return  # Return to the next state to update or load.
 
@@ -180,10 +186,25 @@ def process_document(db, file=None, url=None):
             doc = load_document(url=url)
             doc_name = url.replace("/", "_").replace(":", "_")
             st.session_state.doc_name = doc_name
+            toc = get_table_of_contents(url) #All TOC will use LLM
+
+            #Store chunks
+            st.session_state.doc_chunks = chunk_document_by_toc(doc, toc)
+            # Save TOC to database
+            if toc:
+                existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == doc_name).first()
+                if existing_toc:
+                    existing_toc.toc_items = toc
+                else:
+                    db_toc = DocumentTOC(doc_name=doc_name, toc_items=toc)
+                    db.add(db_toc)
+                db.commit()
+                st.session_state.doc_toc = toc  # Store in session state after saving to db
+            else:
+                st.session_state.doc_toc = None  # or some default value to indicate no toc.
             st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
         st.success('Document load successfully ✔️')
         return st.session_state.vectorstore
-
 
 def display_messages(messages_key):
     """Displays the chat messages."""
@@ -192,28 +213,10 @@ def display_messages(messages_key):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
-
+#The document section will no longer be a thing, so just ignore the method
 def show_document_section(selected_toc_item):
     """Displays the document section content."""
-    if st.session_state.vectorstore:
-        # Assuming your vectorstore has a way to search for similar content
-        # This is a VERY basic example and may not work directly
-
-        if isinstance(selected_toc_item, str):  # PDF Case
-            results = st.session_state.vectorstore.similarity_search(selected_toc_item, k=3)  # Get top 3 matches
-        else:  # Web Scraped Case (assuming you have the ID)
-            results = st.session_state.vectorstore.similarity_search(selected_toc_item["text"], k=3)  # Get top 3 matches
-
-        if results:
-            for doc in results:
-                st.write(doc.page_content)  # Display content of matched documents
-
-        else:
-            st.write("No matching content found.")
-
-    else:
-        st.write("No document loaded.")
-
+    pass #Will not be used
 
 def get_session_options(db):
     """Fetch chat sessions from the database."""
@@ -244,7 +247,6 @@ def delete_session(db, session_key):
         st.error(f"Error deleting session '{session_key}': {e}")
         return False  # Indicate deletion failure
 
-
 def main():
     # Initialize session state
     if 'chat_sessions' not in st.session_state:
@@ -261,6 +263,8 @@ def main():
         st.session_state.doc_url = None
     if 'doc_toc' not in st.session_state:
         st.session_state.doc_toc = None
+    if 'doc_chunks' not in st.session_state:
+        st.session_state.doc_chunks = {} # NEW
     if 'chat_mode' not in st.session_state:
         st.session_state.chat_mode = "File hiện tại"
     if 'deep_reasoning' not in st.session_state:
@@ -270,11 +274,11 @@ def main():
     if 'elements' not in st.session_state:
         st.session_state.elements = None
     if 'modal_open' not in st.session_state:
-        st.session_state.modal_open = None
+        st.session_state.modal_open = False
     if 'selected_toc_item' not in st.session_state:
         st.session_state.selected_toc_item = None
     if 'show_doc_section' not in st.session_state:
-        st.session_state.show_doc_section = False
+        st.session_state.show_doc_section = False #Since we don't have show_doc_section
     if 'show_db_admin' not in st.session_state:
         st.session_state.show_db_admin = False
     if 'delete_session_key' not in st.session_state:
@@ -284,7 +288,7 @@ def main():
 
     st.title("Docs Assistant")
 
-    # Main sidebar for main controls
+    # Main sidebar
     with st.sidebar:
         st.title('DocAssistant')
 
@@ -415,15 +419,6 @@ def main():
                     for doc in selected_docs:
                         st.markdown(f"- {doc}")
 
-            # Display Document Section here, right after Session Info
-            if st.session_state.show_doc_section:
-                st.markdown("---")  # Add a visual separator
-                st.markdown(f"### Document Section: {st.session_state.selected_toc_item}")
-                show_document_section(st.session_state.selected_toc_item)
-
-                if st.button("Close Document Section"):
-                    st.session_state.show_doc_section = False
-                    st.session_state.selected_toc_item = None
 
             # Main chat area
             if st.session_state.elements is not None:
@@ -508,24 +503,43 @@ def main():
             else:
                 st.info("Please load a document")
 
-
     with col2:
-        show_toc()
+      if st.session_state.current_session and st.session_state.doc_toc and st.session_state.doc_chunks: #Only show if session and TOC exist
+
+            st.header("Table of Contents") #Add a header for the table of contents
+
+            for i, item in enumerate(st.session_state.doc_toc): #Iterate through the TOC list.
+                if item and isinstance(item, str): # Check if the toc has content
+                    toc_text = item
+
+                        #Create the expander only if chunk is available
+                    if toc_text in st.session_state.doc_chunks:
+                        with st.expander(toc_text):#Display document section
+                           st.markdown(st.session_state.doc_chunks[toc_text])
 
 def show_toc():
     """Displays the table of contents."""
-    st.header("Table of Contents")
-    if st.session_state.current_session and st.session_state.doc_toc:
-        with st.expander("Table of Contents", expanded=True):
-            for i, item in enumerate(st.session_state.doc_toc):
-                if item and isinstance(item, str):
-                    toc_text = item
-                    if st.button(toc_text, key=f"toc_{i}_main"):
-                        st.session_state.show_doc_section = True
-                        st.session_state.selected_toc_item = toc_text
-    else:
-        st.info("No document loaded or no table of contents available for this session.")
+    #This method is no longer used.
+    pass
 
+
+def get_table_of_contents(url):
+    try:
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url  # Add https:// if no scheme is present
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Extract text content from the webpage for LLM
+        webpage_content = soup.get_text()
+        return generate_toc_with_llm(webpage_content)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching URL: {e}")
+        return []
+    except Exception as e:
+        print(f"Error parsing HTML: {e}")
+        return []
 
 if __name__ == "__main__":
     # This is to ensure tables are created on app startup
