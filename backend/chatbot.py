@@ -6,12 +6,13 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.runnables import chain
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.messages import BaseMessage
+from utils import format_docs, search_intent
 
 def init_chatbot(vector_store, internet_search=False):
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
+        model="gemini-2.0-flash-exp",
         gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
-        temperature=0, # or other parameters
+        temperature=0,
     )
     prompt_template = ChatPromptTemplate.from_messages(
         [
@@ -30,32 +31,22 @@ def init_chatbot(vector_store, internet_search=False):
             ("human", "{input}"),
         ]
     )
-    # Tạo retriever
     retriever = vector_store.as_retriever()
 
-    # Tạo chain
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
     if internet_search:
         search = DuckDuckGoSearchRun()
-        def search_intent(x):
-            query = x["input"]
-            related_results = search.run(query)
-            return related_results
-        retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])) + "\nWeb Search Results:\n" + search_intent(x), "input": RunnablePassthrough()} | prompt_template | llm
+        retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])) + "\nWeb Search Results:\n" + search_intent(x, search), "input": RunnablePassthrough()} | prompt_template | llm
     else:
         retrieval_chain = {"context": lambda x: format_docs(retriever.get_relevant_documents(x["input"])), "input": RunnablePassthrough()} | prompt_template | llm
 
     return retrieval_chain
 
 def generate_toc_with_llm(document_content):
-    print(f"Initializing LLM for TOC generation")
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
+        model="gemini-2.0-flash-exp",
         gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
-        temperature=0, # or other parameters
+        temperature=0,
     )
-    print(f"Generating TOC with LLM for document")
     prompt = f"""
         Extract and generate a structured table of contents based on the key topics in the document. 
         Return only the actual headings or section titles that represent meaningful content, one per line, without numbering or bullet points.
@@ -72,15 +63,11 @@ def generate_toc_with_llm(document_content):
 
     try:
         toc = llm.invoke(prompt)
-        print(f"Generated TOC: {toc}")
         if isinstance(toc, str):
            return toc.split('\n')
         elif isinstance(toc, BaseMessage):
-           print(f"Generated TOC: {toc.content}")
            return toc.content.split('\n')
         else:
-            print(f"Unexpected TOC format: {type(toc)}")
             return None
     except Exception as e:
-        print(f"Error generating TOC with LLM: {e}")
         return None
