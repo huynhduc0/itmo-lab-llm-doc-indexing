@@ -49,17 +49,27 @@ def init_chatbot(vector_store, internet_search=False):
     return retrieval_chain
 
 def generate_toc_with_llm(document_content):
+    print(f"Initializing LLM for TOC generation")
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.0-flash-exp",  # hoặc "gemini-pro"
         gemini_api_key=os.environ.get("GOOGLE_API_KEY"),
         temperature=0, # or other parameters
     )
-
+    print(f"Generating TOC with LLM for document")
     prompt = f"""
-    Please generate a table of contents for the following document. The table of contents should be well-organized and reflect the main topics covered in the document. Return just a list of the headings, one heading per line.  Do not include any numbering or bullet points. Do not include "Title" as a heading unless it is explicitly provided in the document. If there are no clear headings, generate a few key topics that summarize the document's content.
-    Document Content:
-    {document_content}
+        Extract and generate a structured table of contents based on the key topics in the document. 
+        Return only the actual headings or section titles that represent meaningful content, one per line, without numbering or bullet points.
+
+        Exclude any generic, placeholder, or irrelevant headings such as "Title", "Table of Contents", "Document Title", or similar sections. Only include headings that are directly related to the document's main content and structure.
+
+        Do not infer or create a "Title" if it is not explicitly mentioned as a heading in the document. Focus solely on sections that provide clear, substantive content.
+
+        If the document lacks clear headings, infer a few key topics based on the content to summarize the document effectively.
+
+        Document Content:
+        {document_content}
     """
+
     try:
         toc = llm.invoke(prompt)
         print(f"Generated TOC: {toc}")
