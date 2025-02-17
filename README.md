@@ -1,5 +1,7 @@
 # DocAssistant - Document Chatbot
 
+[![Watch the video](https://img.youtube.com/vi/0R51AM7bR10/0.jpg)](https://youtu.be/0R51AM7bR10)
+
 A Streamlit application that allows users to upload documents or enter URLs, chat with the document content using a language model, and view a dynamically generated table of contents.
 
 ## Description
@@ -35,7 +37,6 @@ DocAssistant - это приложение Streamlit, которое позво�
 *   Dynamic Table of Contents Generation (LLM-based)
 *   Database Persistence for Chat Sessions, Messages, and Document Metadata
 *   Right Sidebar Table of Contents Display
-*   Image Support
 
 ## Основные характеристики (Русский)
 
@@ -44,12 +45,11 @@ DocAssistant - это приложение Streamlit, которое позво�
 *   Динамическое создание содержания (на основе LLM)
 *   Сохранение сеансов чата, сообщений и метаданных документов в базе данных
 *   Отображение содержания на правой боковой панели
-*   Поддержка изображений
 
 ## Setup Instructions (English)
 
-1.  **Clone the repository:** `git clone <repository_url>`
-2.  **Navigate to the directory:** `cd <repository_directory>`
+1.  **Clone the repository:** `git clone https://github.com/huynhduc0/itmo-lab-llm-doc-indexing`
+2.  **Navigate to the directory:** `cd itmo-lab-llm-doc-indexing`
 3.  **Create a virtual environment (recommended):**
     ```bash
     python3 -m venv venv
@@ -63,15 +63,15 @@ DocAssistant - это приложение Streamlit, которое позво�
     *   `DB_TYPE`: (Optional) `sqlite` or `postgresql` (defaults to `sqlite`).
     *   `DB_URI`: (Optional) The database connection URI. If using SQLite, this is the path to the database file (e.g., `sqlite:///./doc_assistant.db`). If using PostgreSQL, this is the connection string (e.g., `postgresql://user:password@host:port/database`).
 6.  **Apply database migrations (if using PostgreSQL):** If using PostgreSQL, you may need to set up and run database migrations (using Alembic or a similar tool) to create the tables. See the SQLAlchemy documentation for details.
-7.  **Run the Streamlit app:** `streamlit run your_app.py` (Replace `your_app.py` with your main script file.)
+7.  **Run the Streamlit app:** `streamlit run backend/main.py`
 
 ## Инструкции по установке (Русский)
 
-1.  **Клонируйте репозиторий:** `git clone <repository_url>`
-2.  **Перейдите в каталог:** `cd <directory>`
+1.  **Клонируйте репозиторий:** `git clone https://github.com/huynhduc0/itmo-lab-llm-doc-indexing`
+2.  **Перейдите в каталог:** `cd itmo-lab-llm-doc-indexing`
 3.  **Создайте виртуальную среду (рекомендуется):**
     ```bash
-    python3 -m venv venv
+    python3 -м venv venv
     source venv/bin/activate  # На Linux/macOS
     venv\Scripts\activate  # На Windows
     ```
@@ -82,7 +82,7 @@ DocAssistant - это приложение Streamlit, которое позво�
     *   `DB_TYPE`: (Необязательно) `sqlite` или `postgresql` (по умолчанию `sqlite`).
     *   `DB_URI`: (Необязательно) URI подключения к базе данных. При использовании SQLite это путь к файлу базы данных (например, `sqlite:///./doc_assistant.db`). При использовании PostgreSQL это строка подключения (например, `postgresql://user:password@host:port/database`).
 6.  **Примените миграции базы данных (если используете PostgreSQL):** Если вы используете PostgreSQL, вам может потребоваться настроить и запустить миграции базы данных (с использованием Alembic или аналогичного инструмента) для создания таблиц. Подробности см. в документации SQLAlchemy.
-7.  **Запустите приложение Streamlit:** `streamlit run your_app.py` (Замените `your_app.py` на имя вашего основного скрипта.)
+7.  **Запустите приложение Streamlit:** `streamlit run backend/main.py`
 
 ## Configuration
 
@@ -187,3 +187,9 @@ This project is licensed under the [MIT License](LICENSE).
 ## Лицензия
 
 Этот проект лицензирован в соответствии с [лицензией MIT](LICENSE).
+
+---
+
+## Demo Video
+
+[![Watch the video](https://img.youtube.com/vi/<VIDEO_ID>/0.jpg)](https://www.youtube.com/watch?v=<VIDEO_ID>)
