@@ -5,17 +5,13 @@ from chatbot import init_chatbot, generate_toc_with_llm
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from bs4 import BeautifulSoup
 import requests
-import pdfplumber
 import docx2txt
 import dotenv
 from PIL import Image
-from database import SessionLocal, ChatSession, ChatMessage, DocumentInfo, DocumentTOC  # NO CHUNKINFO
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import BaseMessage
+from database import SessionLocal, ChatSession, ChatMessage, DocumentTOC  # NO CHUNKINFO
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from typing import List, Dict
-import markdown
 
 dotenv.load_dotenv()
 
