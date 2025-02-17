@@ -9,7 +9,7 @@ import pdfplumber
 import docx2txt
 import dotenv
 from PIL import Image
-from database import SessionLocal, ChatSession, ChatMessage, DocumentInfo, DocumentTOC
+from database import SessionLocal, ChatSession, ChatMessage, DocumentInfo, DocumentTOC  # NO CHUNKINFO
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import BaseMessage
 from sqlalchemy.orm import sessionmaker
@@ -28,6 +28,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_available_docs():
+    if not os.path.exists('document_indexes'):
+        os.makedirs('document_indexes')
     return [f for f in os.listdir('document_indexes') if not f.startswith('.') and not os.path.isfile(os.path.join('document_indexes', f))]
 
 
@@ -118,6 +120,7 @@ def process_document(db, file=None, url=None):
         return None
 
     with st.spinner():
+        doc_content = None  # Initialize doc_content here
         if file:
             file_path = save_uploaded_file(file)
             doc_name = file.name[:file.name.index('.')]
@@ -132,36 +135,6 @@ def process_document(db, file=None, url=None):
                 else:
                     doc_content = load_document(file_path=file_path)
 
-                if isinstance(doc_content, list):
-                    doc_content_str = "\n".join([str(item) for item in doc_content])
-                else:
-                    doc_content_str = str(doc_content)
-
-                toc = generate_toc_with_llm(doc_content_str)
-                st.session_state.doc_toc = toc
-
-                st.session_state.doc_chunks = chunk_document_by_toc(doc_content_str, toc, doc_name)
-
-                elements = load_document(file_path=file_path)
-                vectorstore = create_vector_store(elements, doc_name, EMBEDDER)
-
-                if vectorstore:
-                    st.session_state.vectorstore = vectorstore
-                    st.success('Vector store successfully ✔️')
-
-                if toc:
-                    existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == doc_name).first()
-                    if existing_toc:
-                        existing_toc.toc_items = toc
-                    else:
-                        db_toc = DocumentTOC(doc_name=doc_name, toc_items=toc)
-                        db.add(db_toc)
-                    db.commit()
-                    st.session_state.doc_toc = toc
-                else:
-                    st.session_state.doc_toc = None
-
-                return
 
             except Exception as e:
                 db.rollback()
@@ -170,33 +143,61 @@ def process_document(db, file=None, url=None):
 
         elif url:
             st.session_state.doc_url = url
-            doc = load_document(url=url)
-            doc_name = url.replace("/", "_").replace(":", "_")
-            st.session_state.doc_name = doc_name
+            try:
+                doc = load_document(url=url)
+                doc_name = url.replace("/", "_").replace(":", "_")
+                st.session_state.doc_name = doc_name
+                doc_content = doc # set the doc_content here when loading from URL
+            except Exception as e:
+                st.error(f"Error loading URL: {e}")
+                return None
 
-            if isinstance(doc, list):
-                doc_content_str = "\n".join([str(item) for item in doc])
-            else:
-                doc_content_str = str(doc_content)
-
-            toc = get_table_of_contents(url)
-            st.session_state.doc_chunks = chunk_document_by_toc(doc_content_str, toc, doc_name)
-
-            if toc:
-                existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == doc_name).first()
-                if existing_toc:
-                    existing_toc.toc_items = toc
+        # Common processing logic for both file and URL
+        try:  # Encapsulate the rest of the processing in a try-except block
+            if doc_content is not None:  # Check if doc_content has a value
+                if isinstance(doc_content, list):
+                    doc_content_str = "\n".join([str(item) for item in doc_content])
                 else:
-                    db_toc = DocumentTOC(doc_name=doc_name, toc_items=toc)
-                    db.add(db_toc)
-                db.commit()
-                st.session_state.doc_toc = toc
-            else:
-                st.session_state.doc_toc = None
+                    doc_content_str = str(doc_content)
 
-            st.session_state.vectorstore = create_vector_store(doc, doc_name, EMBEDDER)
-        st.success('Document load successfully ✔️')
-        return st.session_state.vectorstore
+                toc = generate_toc_with_llm(doc_content_str)
+                st.session_state.doc_toc = toc
+
+                st.session_state.doc_chunks = chunk_document_by_toc(doc_content_str, toc, st.session_state.doc_name)
+
+                if file:
+                    elements = load_document(file_path=file_path)
+                else:
+                    elements = doc #Using doc instead of load_document in URL
+
+                vectorstore = create_vector_store(elements, st.session_state.doc_name, EMBEDDER)
+
+                if vectorstore:
+                    st.session_state.vectorstore = vectorstore
+                    st.success('Vector store successfully ✔️')
+
+                if toc:
+                    existing_toc = db.query(DocumentTOC).filter(DocumentTOC.doc_name == st.session_state.doc_name).first()
+                    if existing_toc:
+                        existing_toc.toc_items = toc
+                    else:
+                        db_toc = DocumentTOC(doc_name=st.session_state.doc_name, toc_items=toc)
+                        db.add(db_toc)
+                    db.commit()
+                    st.session_state.doc_toc = toc
+                else:
+                    st.session_state.doc_toc = None
+
+                return  # Return after processing the document
+
+            else:  # Handling None doc_content
+                st.error("Failed to load document content.")
+                return None
+
+        except Exception as e:  # Catch any errors in the common logic
+            db.rollback()
+            st.error(f"Error during document processing: {e}")
+            return None
 
 
 def display_messages(messages_key):
