@@ -1,12 +1,10 @@
 # DocAssistant - Document Chatbot
 
+## App Demo Video
+
 [![Watch the video](https://img.youtube.com/vi/0R51AM7bR10/0.jpg)](https://youtu.be/0R51AM7bR10)
 
 A Streamlit application that allows users to upload documents or enter URLs, chat with the document content using a language model, and view a dynamically generated table of contents.
-
-## App Demo Video
-
-[![Watch the video](https://img.youtube.com/vi/0R51AM7bR10/0.jpg)](https://www.youtube.com/watch?v=0R51AM7bR10)
 
 ## Metrics Demo Video
 
