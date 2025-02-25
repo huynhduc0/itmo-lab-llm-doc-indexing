@@ -4,6 +4,13 @@
 
 A Streamlit application that allows users to upload documents or enter URLs, chat with the document content using a language model, and view a dynamically generated table of contents.
 
+## App Demo Video
+
+[![Watch the video](https://img.youtube.com/vi/0R51AM7bR10/0.jpg)](https://www.youtube.com/watch?v=0R51AM7bR10)
+
+## Metrics Demo Video
+
+[![Watch the video](https://img.youtube.com/vi/LxxtUqU_giM/0.jpg)](https://youtu.be/LxxtUqU_giM)
 ## Description
 
 DocAssistant is a tool designed to help users interact with documents more efficiently. Key features include:
@@ -124,6 +131,88 @@ The application is configured using environment variables. Create a `.env` file 
 5.  **Просмотрите содержание:** Содержание для выбранного документа (если оно доступно) будет отображено во второй колонке. Щелкните заголовок, чтобы отобразить этот раздел документа.
 6.  **Управление сеансами чата:** Нажмите кнопку «Удалить», чтобы удалить существующие сеансы чата.
 
+## Metrics and Calculations
+
+The following metrics are used to evaluate the performance of the DocAssistant:
+
+*   **Total Questions:** 4
+*   **Total Latency:** 4.72 seconds
+*   **Average Latency:** 1.18 seconds
+*   **Total Tokens:** 1353
+
+### Latency per Question
+
+*   **how to setup k8s?:** 1.31 seconds
+*   **and what is k8s pod?:** 1.06 seconds
+*   **how to make a k8s pod?:** 1.46 seconds
+*   **oh what is kubectl?:** 0.89 seconds
+
+### Tokens per Question
+
+*   **how to setup k8s?:** 1.3092701435089111
+*   **and what is k8s pod?:** 1.0612914562225342
+*   **how to make a k8s pod?:** 1.4622581005096436
+*   **oh what is kubectl?:** 0.8884408473968506
+
+### BERTScore Metrics per Question
+
+*   **Question: how to setup k8s?**
+    *   **BertScore:** 0.80
+    *   **Faithfulness:** 0.78
+*   **Question: and what is k8s pod?**
+    *   **BertScore:** 0.83
+    *   **Faithfulness:** 0.81
+*   **Question: how to make a k8s pod?**
+    *   **BertScore:** 0.81
+    *   **Faithfulness:** 0.78
+*   **Question: oh what is kubectl?**
+    *   **BertScore:** 0.82
+    *   **Faithfulness:** 0.81
+
+### Explanation
+
+The metrics are calculated using the BERTScore, which evaluates the similarity between the generated responses and the reference answers. The faithfulness metric measures how accurately the generated responses reflect the content of the documents.
+
+#### BERTScore (The F1 Score)
+
+* **What it measures:** Quantifies the semantic similarity between the generated answer and the retrieved context.
+* **How it's calculated:**
+  * Uses pre-trained BERT embeddings to represent words and phrases.
+  * Compares embeddings to find the best matches between words in the answer and context.
+  * Precision (P) measures how much of the answer is found in the context.
+  * Recall (R) measures how much of the context is found in the answer.
+  * F1-score is the harmonic mean of Precision and Recall.
+* **Interpretation:** Higher BERTScore (closer to 1.0) means high semantic similarity; lower BERTScore (closer to 0.0) means little semantic overlap.
+
+#### Faithfulness (Approximated with BERTScore Precision)
+
+* **What it represents:** Uses BERTScore's precision as a proxy for faithfulness.
+* **How it's calculated:** Precision (P) from BERTScore.
+* **Interpretation:** Higher faithfulness (close to 1.0) implies the answer is more faithful to the context; lower faithfulness (close to 0.0) implies less faithfulness.
+
+### Объяснение
+
+Метрики рассчитываются с использованием BERTScore, который оценивает сходство между сгенерированными ответами и эталонными ответами. Метрика faithfulness измеряет, насколько точно сгенерированные ответы отражают содержание документов.
+
+#### BERTScore (The F1 Score)
+
+* **Что измеряет:** Количественно оценивает семантическое сходство между сгенерированным ответом и извлеченным контекстом.
+* **Как рассчитывается:**
+  * Использует предварительно обученные встраивания BERT для представления слов и фраз.
+  * Сравнивает встраивания, чтобы найти лучшие совпадения между словами в ответе и контексте.
+  * Точность (P) измеряет, сколько из ответа найдено в контексте.
+  * Полнота (R) измеряет, сколько из контекста найдено в ответе.
+  * F1-score - это гармоническое среднее между точностью и полнотой.
+* **Интерпретация:** Более высокий BERTScore (ближе к 1.0) означает высокое семантическое сходство; более низкий BERTScore (ближе к 0.0) означает небольшое семантическое совпадение.
+
+#### Faithfulness (Приблизительно с точностью BERTScore)
+
+* **Что представляет:** Использует точность BERTScore в качестве прокси для faithfulness.
+* **Как рассчитывается:** Точность (P) из BERTScore.
+* **Интерпретация:** Более высокая faithfulness (ближе к 1.0) означает, что ответ более верен контексту; более низкая faithfulness (ближе к 0.0) означает меньшую верность.
+
+
+
 ## Troubleshooting
 
 *   **Database Connection Issues:**
@@ -187,9 +276,3 @@ This project is licensed under the [MIT License](LICENSE).
 ## Лицензия
 
 Этот проект лицензирован в соответствии с [лицензией MIT](LICENSE).
-
----
-
-## Demo Video
-
-[![Watch the video](https://img.youtube.com/vi/<VIDEO_ID>/0.jpg)](https://www.youtube.com/watch?v=<VIDEO_ID>)

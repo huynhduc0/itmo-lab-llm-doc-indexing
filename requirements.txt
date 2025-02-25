@@ -1,4 +1,8 @@
 streamlit
+nltk
+torch
+bert_score
+scikit-learn
 langchain
 langchain_google_genai
 faiss-cpu
@@ -16,3 +20,5 @@ Pillow
 langchain_core
 psycopg2-binary
 langchain-community
+datasets
+transformers

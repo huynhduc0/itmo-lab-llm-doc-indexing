@@ -21,3 +21,6 @@ __pycache__/
 # Logs
 *.log
 
+document_indexes/
+uploaded_documents/
+document_chunks/
